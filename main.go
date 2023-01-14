@@ -17,6 +17,7 @@ type Game struct {
 	LastMove     string
 	Position     board.Position
 	Searcher     *board.Searcher
+	IsAI         bool
 }
 
 type httpServer struct {
@@ -72,6 +73,7 @@ func (s *httpServer) handleGet(w http.ResponseWriter, r *http.Request) {
 		game := &Game{
 			Position: board.Position{Board: brd},
 			Searcher: &board.Searcher{TP: map[board.Position]board.Entry{}},
+			IsAI:     resp.Move != "player",
 		}
 		s.mux.Lock()
 		s.games[resp.Session] = game
@@ -105,21 +107,23 @@ func (s *httpServer) handleGet(w http.ResponseWriter, r *http.Request) {
 			s.mux.Unlock()
 			return
 		}
+		resp.Board = game.Position.Flip().Board.String()
+		game.LastMove = resp.Move
 		s.mux.Unlock()
 		go func() {
 			game.IsProcessing = true
-			game.LastMove = resp.Move
-			resp.Board = game.Position.Flip().Board.String()
-			m := game.Searcher.Search(game.Position, 10000)
-			score := game.Position.Value(m)
-			if score <= -board.MateValue {
-				resp.Message = "You won!"
-			}
-			if score >= board.MateValue {
-				resp.Message = "You lost!"
-			}
+			if game.IsAI {
+				m := game.Searcher.Search(game.Position, 10000)
+				score := game.Position.Value(m)
+				if score <= -board.MateValue {
+					resp.Message = "You won!"
+				}
+				if score >= board.MateValue {
+					resp.Message = "You lost!"
+				}
 
-			game.Position = game.Position.Move(m)
+				game.Position = game.Position.Move(m)
+			}
 			game.IsProcessing = false
 		}()
 	case "board":
