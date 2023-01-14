@@ -13,8 +13,10 @@ import (
 )
 
 type Game struct {
-	Position board.Position
-	Searcher *board.Searcher
+	IsProcessing bool
+	LastMove     string
+	Position     board.Position
+	Searcher     *board.Searcher
 }
 
 type httpServer struct {
@@ -78,11 +80,15 @@ func (s *httpServer) handleGet(w http.ResponseWriter, r *http.Request) {
 		s.mux.Unlock()
 	case "move":
 		s.mux.Lock()
-		defer s.mux.Unlock()
 		game := s.games[resp.Session]
 		if game == nil {
 			http.Error(w, fmt.Sprintf("%s: game not found", resp.Action), http.StatusBadRequest)
-
+			s.mux.Unlock()
+			return
+		}
+		if game.IsProcessing {
+			http.Error(w, fmt.Sprintf("%s: game is processing", resp.Action), http.StatusBadRequest)
+			s.mux.Unlock()
 			return
 		}
 		isValid := false
@@ -96,19 +102,36 @@ func (s *httpServer) handleGet(w http.ResponseWriter, r *http.Request) {
 		}
 		if !isValid {
 			http.Error(w, fmt.Sprintf("%s %s: invalid move", resp.Action, resp.Move), http.StatusBadRequest)
+			s.mux.Unlock()
 			return
 		}
-		resp.Board = game.Position.Flip().Board.String()
-		m := game.Searcher.Search(game.Position, 10000)
-		score := game.Position.Value(m)
-		if score <= -board.MateValue {
-			resp.Message = "You won!"
-		}
-		if score >= board.MateValue {
-			resp.Message = "You lost!"
-		}
+		s.mux.Unlock()
+		go func() {
+			game.IsProcessing = true
+			game.LastMove = resp.Move
+			resp.Board = game.Position.Flip().Board.String()
+			m := game.Searcher.Search(game.Position, 10000)
+			score := game.Position.Value(m)
+			if score <= -board.MateValue {
+				resp.Message = "You won!"
+			}
+			if score >= board.MateValue {
+				resp.Message = "You lost!"
+			}
 
-		game.Position = game.Position.Move(m)
+			game.Position = game.Position.Move(m)
+			game.IsProcessing = false
+		}()
+	case "board":
+		s.mux.Lock()
+		defer s.mux.Unlock()
+		game := s.games[resp.Session]
+		if game == nil {
+			http.Error(w, fmt.Sprintf("%s: game not found", resp.Action), http.StatusBadRequest)
+			return
+		}
+		resp.Message = "Last move: "
+		resp.Board = game.Position.Board.String()
 	default:
 		http.Error(w, fmt.Sprintf("invalid action: %s", resp.Action), http.StatusBadRequest)
 		return
