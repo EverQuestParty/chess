@@ -203,7 +203,7 @@ func (pos Position) Move(m Move) (np Position) {
 	np = pos
 	np.ep = 0
 	np.kp = 0
-	np.score = pos.score + pos.value(m)
+	np.score = pos.score + pos.Value(m)
 	np.Board[m.to] = pos.Board[m.from]
 	np.Board[m.from] = '.'
 	if i == A1 {
@@ -247,7 +247,7 @@ func (pos Position) Move(m Move) (np Position) {
 }
 
 // Value returns the score of the current position if the move is applied.
-func (pos Position) value(m Move) int {
+func (pos Position) Value(m Move) int {
 	pst := map[Piece][120]int{
 		'P': {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 178, 183, 186, 173, 202, 182, 185, 190, 0, 0, 107, 129, 121, 144, 140, 131, 144, 107, 0, 0, 83, 116, 98, 115, 114, 0, 115, 87, 0, 0, 74, 103, 110, 109, 106, 101, 0, 77, 0, 0, 78, 109, 105, 89, 90, 98, 103, 81, 0, 0, 69, 108, 93, 63, 64, 86, 103, 69, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 		'N': {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 214, 227, 205, 205, 270, 225, 222, 210, 0, 0, 277, 274, 380, 244, 284, 342, 276, 266, 0, 0, 290, 347, 281, 354, 353, 307, 342, 278, 0, 0, 304, 304, 325, 317, 313, 321, 305, 297, 0, 0, 279, 285, 311, 301, 302, 315, 282, 0, 0, 0, 262, 290, 293, 302, 298, 295, 291, 266, 0, 0, 257, 265, 282, 0, 282, 0, 257, 260, 0, 0, 206, 257, 254, 256, 261, 245, 258, 211, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -332,7 +332,7 @@ func (s *Searcher) bound(pos Position, gamma, depth int) (score int) {
 	bestScore, bestMove := -3*MateValue, Move{}
 
 	for _, m := range pos.Moves() {
-		if depth <= 0 && pos.value(m) < 150 {
+		if depth <= 0 && pos.Value(m) < 150 {
 			break
 		}
 		score := -s.bound(pos.Move(m), 1-gamma, depth-1)

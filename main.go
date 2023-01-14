@@ -49,12 +49,14 @@ func run() error {
 func (s *httpServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	type Resp struct {
 		Action  string
+		Move    string
 		Session string
 		Message string
 		Board   string
 	}
 	resp := &Resp{
 		Action:  r.URL.Query().Get("action"),
+		Move:    r.URL.Query().Get("move"),
 		Session: r.URL.Query().Get("session"),
 	}
 	switch resp.Action {
@@ -63,6 +65,7 @@ func (s *httpServer) handleGet(w http.ResponseWriter, r *http.Request) {
 		brd, err := board.FEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBKQBNR")
 		if err != nil {
 			http.Error(w, fmt.Sprintf("%s: FEN: %s", resp.Action, err), http.StatusBadRequest)
+			return
 		}
 		game := &Game{
 			Position: board.Position{Board: brd},
@@ -73,6 +76,39 @@ func (s *httpServer) handleGet(w http.ResponseWriter, r *http.Request) {
 		resp.Message = "New Game Created"
 		resp.Board = game.Position.Board.String()
 		s.mux.Unlock()
+	case "move":
+		s.mux.Lock()
+		defer s.mux.Unlock()
+		game := s.games[resp.Session]
+		if game == nil {
+			http.Error(w, fmt.Sprintf("%s: game not found", resp.Action), http.StatusBadRequest)
+
+			return
+		}
+		isValid := false
+		for _, m := range game.Position.Moves() {
+			if resp.Move != m.String() {
+				continue
+			}
+			game.Position = game.Position.Move(m)
+			isValid = true
+			break
+		}
+		if !isValid {
+			http.Error(w, fmt.Sprintf("%s %s: invalid move", resp.Action, resp.Move), http.StatusBadRequest)
+			return
+		}
+		resp.Board = game.Position.Flip().Board.String()
+		m := game.Searcher.Search(game.Position, 10000)
+		score := game.Position.Value(m)
+		if score <= -board.MateValue {
+			resp.Message = "You won!"
+		}
+		if score >= board.MateValue {
+			resp.Message = "You lost!"
+		}
+
+		game.Position = game.Position.Move(m)
 	default:
 		http.Error(w, fmt.Sprintf("invalid action: %s", resp.Action), http.StatusBadRequest)
 		return
