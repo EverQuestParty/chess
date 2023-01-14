@@ -1,4 +1,4 @@
-package main
+package board
 
 import (
 	"sort"
@@ -83,7 +83,7 @@ func TestMoves(t *testing.T) {
 		if err != nil {
 			t.Error(game, b, err)
 		}
-		p := Position{board: b}
+		p := Position{Board: b}
 		moves := []string{}
 		for _, m := range p.Moves() {
 			moves = append(moves, m.String())

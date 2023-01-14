@@ -1,4 +1,4 @@
-package main
+package board
 
 import (
 	"errors"
@@ -121,7 +121,7 @@ func (m Move) String() string { return m.from.String() + m.to.String() }
 
 // Position describes a board with the current game state (en passant and castling rules).
 type Position struct {
-	board Board   // current board
+	Board Board   // current board
 	score int     // board score, the higher the better
 	wc    [2]bool // white castling possibilities
 	bc    [2]bool // black castling possibilities
@@ -140,7 +140,7 @@ func (pos Position) Flip() Position {
 		ep:    pos.ep.Flip(),
 		kp:    pos.kp.Flip(),
 	}
-	np.board = pos.board.Flip()
+	np.Board = pos.Board.Flip()
 	return np
 }
 
@@ -156,7 +156,7 @@ func (pos Position) Moves() (moves []Move) {
 		'K': {N, E, S, W, N + E, S + E, S + W, N + W},
 	}
 	// Iterate over all squares, considering squares with our pieces only
-	for index, p := range pos.board {
+	for index, p := range pos.Board {
 		if !p.ours() {
 			continue
 		}
@@ -164,7 +164,7 @@ func (pos Position) Moves() (moves []Move) {
 		// Iterate over all move directions for the given piece
 		for _, d := range directions[p] {
 			for j := i + d; ; j = j + d {
-				q := pos.board[j]
+				q := pos.Board[j]
 				if q == ' ' || (q != '.' && q.ours()) {
 					break
 				}
@@ -172,7 +172,7 @@ func (pos Position) Moves() (moves []Move) {
 					if (d == N || d == N+N) && q != '.' {
 						break
 					}
-					if d == N+N && (i < A1+N || pos.board[i+N] != '.') {
+					if d == N+N && (i < A1+N || pos.Board[i+N] != '.') {
 						break
 					}
 					if (d == N+W || d == N+E) && q == '.' && (j != pos.ep && j != pos.kp && j != pos.kp-1 && j != pos.kp+1) {
@@ -185,10 +185,10 @@ func (pos Position) Moves() (moves []Move) {
 					break
 				}
 				// Castling rules
-				if i == A1 && pos.board[j+E] == 'K' && pos.wc[0] {
+				if i == A1 && pos.Board[j+E] == 'K' && pos.wc[0] {
 					moves = append(moves, Move{from: j + E, to: j + W})
 				}
-				if i == H1 && pos.board[j+W] == 'K' && pos.wc[1] {
+				if i == H1 && pos.Board[j+W] == 'K' && pos.wc[1] {
 					moves = append(moves, Move{from: j + W, to: j + E})
 				}
 			}
@@ -199,13 +199,13 @@ func (pos Position) Moves() (moves []Move) {
 
 // Move returns a modified rotated position after the move is applied.
 func (pos Position) Move(m Move) (np Position) {
-	i, j, p := m.from, m.to, pos.board[m.from]
+	i, j, p := m.from, m.to, pos.Board[m.from]
 	np = pos
 	np.ep = 0
 	np.kp = 0
 	np.score = pos.score + pos.value(m)
-	np.board[m.to] = pos.board[m.from]
-	np.board[m.from] = '.'
+	np.Board[m.to] = pos.Board[m.from]
+	np.Board[m.from] = '.'
 	if i == A1 {
 		np.wc[0] = false
 	}
@@ -222,17 +222,17 @@ func (pos Position) Move(m Move) (np Position) {
 		np.wc[0], np.wc[1] = false, false
 		if abs(int(j-i)) == 2 {
 			if j < i {
-				np.board[H1] = '.'
+				np.Board[H1] = '.'
 			} else {
-				np.board[A1] = '.'
+				np.Board[A1] = '.'
 			}
-			np.board[(i+j)/2] = 'R'
+			np.Board[(i+j)/2] = 'R'
 		}
 	}
 	if p == 'P' {
 		// Pawn promotion
 		if A8 <= j && j <= H8 {
-			np.board[j] = 'Q'
+			np.Board[j] = 'Q'
 		}
 		// First pawn move
 		if j-i == 2*N {
@@ -240,7 +240,7 @@ func (pos Position) Move(m Move) (np Position) {
 		}
 		// En-passant capture
 		if j == pos.ep {
-			np.board[j+S] = '.'
+			np.Board[j+S] = '.'
 		}
 	}
 	return np.Flip()
@@ -258,7 +258,7 @@ func (pos Position) value(m Move) int {
 	}
 
 	i, j := m.from, m.to
-	p, q := Piece(pos.board[i]), Piece(pos.board[j])
+	p, q := Piece(pos.Board[i]), Piece(pos.Board[j])
 	score := pst[p][j] - pst[p][i]
 	if q != '.' && q != ' ' && !q.ours() {
 		score += pst[q.Flip()][j.Flip()]
@@ -298,7 +298,7 @@ var (
 	EvalRoughness = 13
 )
 
-type entry struct {
+type Entry struct {
 	depth int
 	score int
 	gamma int
@@ -307,13 +307,13 @@ type entry struct {
 
 // Searcher is an recursive alpha-beta search algorithm with transposition memory
 type Searcher struct {
-	tp    map[Position]entry
+	TP    map[Position]Entry
 	nodes int
 }
 
 func (s *Searcher) bound(pos Position, gamma, depth int) (score int) {
 	s.nodes++
-	e, ok := s.tp[pos]
+	e, ok := s.TP[pos]
 	if ok && e.depth >= depth && ((e.score < e.gamma && e.score < gamma) ||
 		(e.score >= e.gamma && e.score >= gamma)) {
 		return e.score
@@ -352,9 +352,9 @@ func (s *Searcher) bound(pos Position, gamma, depth int) (score int) {
 	}
 
 	if !ok || depth >= e.depth && bestScore >= gamma {
-		s.tp[pos] = entry{depth: depth, score: bestScore, gamma: gamma, move: bestMove}
-		if len(s.tp) > MaxTableSize {
-			s.tp = map[Position]entry{}
+		s.TP[pos] = Entry{depth: depth, score: bestScore, gamma: gamma, move: bestMove}
+		if len(s.TP) > MaxTableSize {
+			s.TP = map[Position]Entry{}
 		}
 	}
 
@@ -380,5 +380,5 @@ func (s *Searcher) Search(pos Position, maxNodes int) (m Move) {
 			break
 		}
 	}
-	return s.tp[pos].move
+	return s.TP[pos].move
 }
