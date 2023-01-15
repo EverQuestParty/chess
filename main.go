@@ -41,7 +41,7 @@ func run() error {
 	}
 	r := mux.NewRouter()
 	r.HandleFunc("/", server.handleGet).Methods("GET")
-	addr := ":8080"
+	addr := ":6969"
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: r,
