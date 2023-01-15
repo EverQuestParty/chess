@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// Game wraps each individual game
 type Game struct {
 	IsProcessing bool
 	LastMove     string
