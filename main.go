@@ -6,24 +6,25 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
-	"github.com/everquestparty/chess/board"
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	"github.com/notnil/chess"
+	"github.com/notnil/chess/uci"
 )
 
 // Game wraps each individual game
 type Game struct {
-	IsProcessing bool
-	LastMove     string
-	Position     board.Position
-	Searcher     *board.Searcher
-	IsAI         bool
+	instance *chess.Game
+	lastMove string
+	isAI     bool
 }
 
 type httpServer struct {
-	mux   sync.RWMutex
-	games map[string]*Game
+	mux    sync.RWMutex
+	games  map[string]*Game
+	engine *uci.Engine
 }
 
 func main() {
@@ -36,8 +37,18 @@ func main() {
 }
 
 func run() error {
+	eng, err := uci.New("stockfish")
+	if err != nil {
+		return fmt.Errorf("uci.New: %w", err)
+	}
+	err = eng.Run(uci.CmdUCI, uci.CmdIsReady, uci.CmdUCINewGame)
+	if err != nil {
+		return fmt.Errorf("uci.Run: %w", err)
+	}
+
 	server := &httpServer{
-		games: make(map[string]*Game),
+		engine: eng,
+		games:  make(map[string]*Game),
 	}
 	r := mux.NewRouter()
 	r.HandleFunc("/", server.handleGet).Methods("GET")
@@ -52,91 +63,114 @@ func run() error {
 
 func (s *httpServer) handleGet(w http.ResponseWriter, r *http.Request) {
 	type Resp struct {
-		Action  string
-		Move    string
-		Session string
-		Message string
-		Board   string
+		Action   string
+		Move     string
+		AIMove   string
+		LastMove string
+		Session  string
+		Message  string
+		Board    string
 	}
 	resp := &Resp{
 		Action:  r.URL.Query().Get("action"),
 		Move:    r.URL.Query().Get("move"),
 		Session: r.URL.Query().Get("session"),
 	}
+	s.mux.Lock()
+	defer s.mux.Unlock()
+
 	switch resp.Action {
 	case "new":
 		resp.Session = uuid.NewString()
-		brd, err := board.FEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBKQBNR")
-		if err != nil {
-			http.Error(w, fmt.Sprintf("%s: FEN: %s", resp.Action, err), http.StatusBadRequest)
-			return
-		}
 		game := &Game{
-			Position: board.Position{Board: brd},
-			Searcher: &board.Searcher{TP: map[board.Position]board.Entry{}},
-			IsAI:     resp.Move != "player",
+			instance: chess.NewGame(chess.UseNotation(chess.UCINotation{})),
+			isAI:     resp.Move != "player",
 		}
-		s.mux.Lock()
 		s.games[resp.Session] = game
 		resp.Message = "New Game Created"
-		resp.Board = game.Position.Board.String()
-		s.mux.Unlock()
+		resp.Board = game.instance.String()
+		fmt.Println(game.instance.Position().Board().Draw())
 	case "move":
-		s.mux.Lock()
 		game := s.games[resp.Session]
 		if game == nil {
 			http.Error(w, fmt.Sprintf("%s: game not found", resp.Action), http.StatusBadRequest)
-			s.mux.Unlock()
 			return
 		}
-		if game.IsProcessing {
-			http.Error(w, fmt.Sprintf("%s: game is processing", resp.Action), http.StatusBadRequest)
-			s.mux.Unlock()
-			return
-		}
-		isValid := false
-		for _, m := range game.Position.Moves() {
-			if resp.Move != m.String() {
-				continue
-			}
-			game.Position = game.Position.Move(m)
-			isValid = true
-			break
-		}
-		if !isValid {
+		resp.LastMove = game.lastMove
+		err := game.instance.MoveStr(resp.Move)
+		if err != nil {
 			http.Error(w, fmt.Sprintf("%s %s: invalid move", resp.Action, resp.Move), http.StatusBadRequest)
-			s.mux.Unlock()
 			return
 		}
-		resp.Board = game.Position.Flip().Board.String()
-		game.LastMove = resp.Move
-		s.mux.Unlock()
-		go func() {
-			game.IsProcessing = true
-			if game.IsAI {
-				m := game.Searcher.Search(game.Position, 10000)
-				score := game.Position.Value(m)
-				if score <= -board.MateValue {
-					resp.Message = "You won!"
-				}
-				if score >= board.MateValue {
-					resp.Message = "You lost!"
-				}
-
-				game.Position = game.Position.Move(m)
+		game.lastMove = resp.Move
+		resp.LastMove = resp.Move
+		if game.isAI {
+			cmdPos := uci.CmdPosition{Position: game.instance.Position()}
+			cmdGo := uci.CmdGo{MoveTime: time.Second / 100}
+			err = s.engine.Run(cmdPos, cmdGo)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("%s %s: run: %s", resp.Action, resp.Move, err), http.StatusBadRequest)
+				return
 			}
-			game.IsProcessing = false
-		}()
+			move := s.engine.SearchResults().BestMove
+			err = game.instance.Move(move)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("%s %s: move: %s", resp.Action, resp.Move, err), http.StatusBadRequest)
+				return
+			}
+			resp.AIMove = move.String()
+		}
+
+		resp.Board = game.instance.String()
+		fmt.Println(game.instance.Position().Board().Draw())
+	case "auto":
+		game := s.games[resp.Session]
+		if game == nil {
+			http.Error(w, fmt.Sprintf("%s: game not found", resp.Action), http.StatusBadRequest)
+			return
+		}
+		cmdPos := uci.CmdPosition{Position: game.instance.Position()}
+		cmdGo := uci.CmdGo{MoveTime: time.Second / 100}
+		err := s.engine.Run(cmdPos, cmdGo)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("%s %s: run: %s", resp.Action, resp.Move, err), http.StatusBadRequest)
+			return
+		}
+		move := s.engine.SearchResults().BestMove
+		err = game.instance.Move(move)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("%s %s: move: %s", resp.Action, resp.Move, err), http.StatusBadRequest)
+			return
+		}
+		resp.Move = move.String()
+		game.lastMove = resp.Move
+		resp.LastMove = resp.Move
+
+		cmdPos = uci.CmdPosition{Position: game.instance.Position()}
+		cmdGo = uci.CmdGo{MoveTime: time.Second / 100}
+		err = s.engine.Run(cmdPos, cmdGo)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("%s %s: run: %s", resp.Action, resp.Move, err), http.StatusBadRequest)
+			return
+		}
+		move = s.engine.SearchResults().BestMove
+		err = game.instance.Move(move)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("%s %s: move: %s", resp.Action, resp.Move, err), http.StatusBadRequest)
+			return
+		}
+		resp.AIMove = move.String()
+		resp.Board = game.instance.String()
+		fmt.Println(game.instance.Position().Board().Draw())
 	case "board":
-		s.mux.Lock()
-		defer s.mux.Unlock()
 		game := s.games[resp.Session]
 		if game == nil {
 			http.Error(w, fmt.Sprintf("%s: game not found", resp.Action), http.StatusBadRequest)
 			return
 		}
 		resp.Message = "Last move: "
-		resp.Board = game.Position.Board.String()
+		resp.LastMove = game.lastMove
+		resp.Board = game.instance.String()
 	default:
 		http.Error(w, fmt.Sprintf("invalid action: %s", resp.Action), http.StatusBadRequest)
 		return
